@@ -1,0 +1,7 @@
+# 统一按 LF 存储，检出时按平台转换。
+# 不加这一条，Windows 上提交会把整个文件标成改动（CRLF/LF 差异），review 全是噪音。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary

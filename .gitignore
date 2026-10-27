@@ -1,0 +1,26 @@
+# 用户数据 —— 绝对不能进版本库
+# 这是某个人的真实人生，提交上去就是隐私事故。
+events.jsonl*
+hook.log
+*.pkl
+*.remember-me/
+_demo*/
+_bench_*/
+
+# 评测与实验产物
+prompt_A.md
+prompt_B.md
+answer_A.md
+answer_B.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

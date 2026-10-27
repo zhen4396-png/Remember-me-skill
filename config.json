@@ -1,0 +1,16 @@
+{
+  "name": "remember-me",
+  "displayName": "长期记忆 · 关键事件 · 人生轴",
+  "encoding_fallback": [
+    "utf-8",
+    "gbk",
+    "gb18030"
+  ],
+  "features": [
+    "cli",
+    "selftest",
+    "index",
+    "no-model-call",
+    "append-only"
+  ]
+}
