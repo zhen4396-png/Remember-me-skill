@@ -3,8 +3,11 @@
 
 三条硬约束：
   1. 只有一条写入路径 add()。pinned 和 kinds 在落盘那一刻定型，之后没人能改。
-  2. 没有任何删除接口。想「忘掉」只能降级检索优先级，不能删字节。
-  3. 检索不写。recall 是纯函数，不入库、不加权、不改任何字段。
+  2. 没有任何删除接口。想「忘掉」只能降级检索优先级，不能删字节
+     （唯一会重写 events.jsonl 的是 run.py 的 rejudge，见那里的说明）。
+  3. 召回不写记忆库。events.jsonl 的字节在召回前后一致。
+     但会给 .cache.pkl 写一份解析缓存——那不是记忆，删掉只会变慢。
+     `Store(root, cache=False)` 可以彻底关掉它。
 
 性能设计（这三条是为了「读取不慢」）：
   · 写入时就把 kinds 算好存进 jsonl。读的时候不再跑正则——这是 1.3 秒变 60 毫秒的关键。
@@ -82,27 +85,32 @@ class Index:
 
 
 class Store:
-    def __init__(self, root):
+    def __init__(self, root, cache=True):
         # 必须展开 ~。不展开的话 Store("~/.remember-me") 会在当前目录下
         # 建一个名字就叫「~」的文件夹，而 README 里写的正是这个用法。
         self.root = os.path.abspath(os.path.expanduser(os.fspath(root)))
         self.path = os.path.join(self.root, EVENTS)
-        self.cache_path = os.path.join(root, CACHE)
+        # 这里必须用展开后的 self.root。用原始 root 会让 Store("~/x") 把缓存
+        # 写到当前目录下的「~/.cache.pkl」，正是上面那个坑的另一半。
+        self.cache_path = os.path.join(self.root, CACHE)
+        self.use_cache = cache
         self.V = lexicon.load()
         os.makedirs(self.root, exist_ok=True)
-        self._mem = None        # (sig, recs, index)
+        self._mem = None        # (sig, recs)
+        self._idx = None        # (sig, index)，跟着 recs 一起失效
 
     # ---------- 写 ----------
-    def add(self, text, d=None, sync=False):
-        text = (text or "").strip().replace("\n", " ")
-        if not text:
-            return None
-        d = d or date.today().isoformat()
-        if isinstance(d, date):
-            d = d.isoformat()
-        j = J.judge(text, self.V)
-        from . import axis
-        rec = {
+    @staticmethod
+    def make_rec(text, d, V=None):
+        """一条记录落盘时的完整形状。
+
+        add() 和 bench_scale.py 共用这一处：基准脚本原来手抄了一份 dict，
+        结果漏了 kinds，两种写入路径造出来的库形状不一样。
+        以后加字段只改这里。
+        """
+        j = J.judge(text, V or lexicon.load())
+        from . import axis          # axis 依赖 store，只能在这里导入，避免循环
+        return {
             "d": d,
             "text": text,
             "pin": bool(j["pin"]),
@@ -110,12 +118,29 @@ class Store:
             "ch": j["ch"],
             "kinds": axis.kinds_of(text),      # 写时定型，读时不再算
         }
+
+    def add(self, text, d=None, sync=False):
+        """追加一条。除了把换行压成空格、去掉首尾空白，不改原文一个字。
+
+        压换行是为了让 jsonl 一行一条；json.dumps 本来也会转义换行，
+        但保留 \n 会让 render() 输出的每句话跨行，贴进上下文后不好读。
+        **这意味着库里存的不是逐字节的原文**，而是"原文的连续子串，去掉换行"。
+        想要原样保留，直接用 events.jsonl 里的 json 转义。
+        """
+        text = (text or "").strip().replace("\n", " ")
+        if not text:
+            return None
+        d = d or date.today().isoformat()
+        if isinstance(d, date):
+            d = d.isoformat()
+        rec = self.make_rec(text, d, self.V)
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             if sync:
                 f.flush()
                 os.fsync(f.fileno())
         self._mem = None                       # 让下次 load 重建
+        self._idx = None
         return rec
 
     def ingest(self, lines):
@@ -157,13 +182,14 @@ class Store:
             return self._mem[1]
 
         recs = None
-        try:
-            with open(self.cache_path, "rb") as f:
-                blob = pickle.load(f)
-            if blob.get("sig") == sig:
-                recs = blob["recs"]
-        except (OSError, pickle.UnpicklingError, EOFError, AttributeError, KeyError):
-            recs = None
+        if self.use_cache:
+            try:
+                with open(self.cache_path, "rb") as f:
+                    blob = pickle.load(f)
+                if blob.get("sig") == sig:
+                    recs = blob["recs"]
+            except (OSError, pickle.UnpicklingError, EOFError, AttributeError, KeyError):
+                recs = None
 
         if recs is None:
             from . import axis
@@ -185,26 +211,28 @@ class Store:
                         r["kinds"] = axis.kinds_of(r["text"])
                     recs.append(r)
             recs.sort(key=lambda r: r["d"])
-            try:
-                tmp = self.cache_path + ".tmp"
-                with open(tmp, "wb") as f:
-                    pickle.dump({"sig": sig, "recs": recs}, f, protocol=4)
-                os.replace(tmp, self.cache_path)
-            except OSError:
-                pass
+            if self.use_cache:
+                try:
+                    tmp = self.cache_path + ".tmp"
+                    with open(tmp, "wb") as f:
+                        pickle.dump({"sig": sig, "recs": recs}, f, protocol=4)
+                    os.replace(tmp, self.cache_path)
+                except OSError:
+                    pass
 
         self._mem = (sig, recs)
+        self._idx = None
         return recs
 
     def index(self):
         """内存倒排索引。第一次调用时建，之后跟着 load 缓存一起复用。"""
         recs = self.load()
-        if self._mem and len(self._mem) == 3:
-            return self._mem[2]
+        sig = self._mem[0] if self._mem else None
+        if self._idx and self._idx[0] == sig:
+            return self._idx[1]
         from . import axis
         idx = Index(recs, axis.bigrams)
-        sig = self._mem[0]
-        self._mem = (sig, recs, idx)
+        self._idx = (sig, idx)
         return idx
 
     def stats(self):

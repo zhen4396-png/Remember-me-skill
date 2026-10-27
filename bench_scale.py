@@ -68,11 +68,8 @@ def bench(n, home):
     lat = []
     with open(p, "a", encoding="utf-8") as f:
         for i, (d, t) in enumerate(rows):
-            from engine import judge as J
-            j = J.judge(t, st.V)
-            rec = {"d": d, "text": t, "pin": bool(j["pin"]),
-                   "score": int(max(j["ev"], j["ar"])), "ch": j["ch"]}
-            line = json.dumps(rec, ensure_ascii=False)
+            # 和 add() 走同一个 make_rec：手抄一份 dict 迟早跟落盘形状漂移
+            line = json.dumps(Store.make_rec(t, d, st.V), ensure_ascii=False)
             a = time.perf_counter()
             f.write(line + "\n")
             if i % 50 == 0:                 # 每 50 条 fsync 一次（真实用法）

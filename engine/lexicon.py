@@ -22,6 +22,10 @@ def load(path=None):
 
 
 def meta(path=None):
+    """lexicon.json 的 meta 段。跟着 load() 走同一个缓存，不重复读文件。"""
     p = path or os.path.join(ASSETS, "lexicon.json")
-    with open(p, encoding="utf-8") as f:
-        return json.load(f).get("meta", {})
+    key = (p, "meta")
+    if key not in _CACHE:
+        with open(p, encoding="utf-8") as f:
+            _CACHE[key] = json.load(f).get("meta", {})
+    return _CACHE[key]

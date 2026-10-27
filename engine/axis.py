@@ -102,6 +102,7 @@ def milestones(recs):
     return out
 
 
+DAYS_PER_YEAR = 365.25    # 「跨几年」的换算。run.py 和 demo.py 都要用，别各写一份
 SPINE_MAX_CHARS = 120     # 常驻层单条上限：超过就不是一句话了
 
 
@@ -159,6 +160,27 @@ def build_index(recs):
     return Index(recs, bigrams)
 
 
+def _hit(text, needle):
+    """大小写不敏感的包含判断。中英混排里「CAD」和「cad」必须是同一件事。"""
+    return needle in text or needle.lower() in text.lower()
+
+
+def _dedup(recs, n=12):
+    """按前 n 个字去重，保留首次出现的顺序。
+
+    用前 12 字而不是整句当键：同一句话从不同来源进来时可能差一两个标点，
+    整句比对会漏掉这种重复。
+    """
+    out, seen = [], set()
+    for r in recs:
+        k = r["text"][:n]
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
+
+
 def entities(q, recs, idx=None, topn=2):
     """从问题里认出「谁」和「什么」。
 
@@ -176,7 +198,7 @@ def entities(q, recs, idx=None, topn=2):
             if idx is not None:
                 hits = len(idx.contains(c, bigrams))
             else:
-                hits = sum(1 for r in recs if c in r["text"] or c.lower() in r["text"].lower())
+                hits = sum(1 for r in recs if _hit(r["text"], c))
             if hits >= 3:
                 cand[c] = hits * n
     out = []
@@ -245,7 +267,7 @@ def retrieve(recs, q, budget=20, idx=None):
         s += 0.6 * r.get("score", 0)
         if r.get("pin"):
             s += 3.0
-        if any(e in r["text"] or e.lower() in r["text"].lower() for e in ents):
+        if any(_hit(r["text"], e) for e in ents):
             s += 6.0
         if qkinds & set(r["kinds"]):
             s += 3.0
@@ -274,13 +296,7 @@ def retrieve(recs, q, budget=20, idx=None):
             tail += [recs[i] for i in range(lo, hi)
                      if recs[i].get("pin") or recs[i].get("score", 0) >= 7]
 
-    out, seen = [], set()
-    for r in ranked + tail:
-        k = r["text"][:12]
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(r)
+    out = _dedup(ranked + tail)
     # ---------- 相关性闸：宁可不给，也不给错 ----------
     # 上面那批分是「排序」，不是「有没有」。真实库上问「我妈身体怎么样」，
     # 一个内容二字组都没命中，但排序照样给出 4 条（CAD 图纸、桌面整理……）。
@@ -299,7 +315,7 @@ def retrieve(recs, q, budget=20, idx=None):
         def _ok(r):
             if target & bigrams(r["text"]):
                 return True
-            if any(e in r["text"] or e.lower() in r["text"].lower() for e in ents):
+            if any(_hit(r["text"], e) for e in ents):
                 return True
             if crit_q & set(r["text"]):
                 return True
@@ -336,14 +352,7 @@ def render(recs, q, idx=None, with_spine=False):
     if with_spine and got:
         sp = spine(recs)
         lines = [head, f"（刻度层 {len(sp)} 句 + 相关 {len(got)} 句，按时间排）"]
-        merged, seen = [], set()
-        for r in sorted(sp + got, key=lambda r: r["d"]):
-            k = r["text"][:12]
-            if k in seen:
-                continue
-            seen.add(k)
-            merged.append(r)
-        got = merged
+        got = _dedup(sorted(sp + got, key=lambda r: r["d"]))
     elif with_spine:
         lines = [head, "（没有和这个问题相关的记忆。不要编，直接说不记得。）"]
     else:

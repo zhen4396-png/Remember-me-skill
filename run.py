@@ -30,6 +30,18 @@ def _store(args):
     return Store(args.home or DEFAULT_ROOT)
 
 
+def _recs_or_none(st):
+    """取全库；空库就打印一句并返回 None（调用方据此 return 1）。
+
+    原来 recall/axis/stats 各写了一遍同样的五行，改一处文案要改三处。
+    """
+    recs = st.load()
+    if not recs:
+        print("库是空的")
+        return None
+    return recs
+
+
 def cmd_init(args):
     st = _store(args)
     os.makedirs(st.root, exist_ok=True)
@@ -69,9 +81,8 @@ def cmd_ingest(args):
 
 def cmd_recall(args):
     st = _store(args)
-    recs = st.load()
-    if not recs:
-        print("库是空的")
+    recs = _recs_or_none(st)
+    if recs is None:
         return 1
     print(axis.render(recs, args.query, idx=st.index()))
     return 0
@@ -79,9 +90,8 @@ def cmd_recall(args):
 
 def cmd_axis(args):
     st = _store(args)
-    recs = st.load()
-    if not recs:
-        print("库是空的")
+    recs = _recs_or_none(st)
+    if recs is None:
         return 1
     print(f"{'年':<6}{'句数':>6}{'聊天日':>7}{'刻度':>6}  主要的事")
     for a in axis.build_axis(recs):
@@ -94,7 +104,7 @@ def cmd_milestone(args):
     st = _store(args)
     recs = st.load()
     for m in axis.milestones(recs):
-        yrs = m["span_days"] / 365.25
+        yrs = m["span_days"] / axis.DAYS_PER_YEAR
         print(f"{m['cn']:<5}{m['n']:>4}次  跨{yrs:>5.1f}年  {m['first']['d']} → {m['last']['d']}")
         print(f"      首：{m['first']['text'][:60]}")
         if m["last"] is not m["first"]:
@@ -126,7 +136,8 @@ def cmd_rejudge(args):
     if not os.path.exists(path):
         print("库是空的")
         return 1
-    rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    with open(path, encoding="utf-8") as f:
+        rows = [json.loads(l) for l in f if l.strip()]
     if not rows:
         print("库是空的")
         return 1
@@ -143,16 +154,25 @@ def cmd_rejudge(args):
     if not args.dry_run:
         import time as _t
         bak = path + ".bak-" + _t.strftime("%H%M%S")
-        open(bak, "w", encoding="utf-8").writelines(
-            l for l in open(path, encoding="utf-8") if l.strip())
-        with open(path, "w", encoding="utf-8") as f:
+        # 备份：先读进内存再一次写完，不能边读边写（句柄没关，异常时留半截备份）
+        with open(path, encoding="utf-8") as f:
+            raw = [l for l in f if l.strip()]
+        with open(bak, "w", encoding="utf-8") as f:
+            f.writelines(raw)
+        # 正文：写临时文件再 os.replace。直接 open(path,"w") 的话，
+        # 中途崩溃/断电就是「全库丢一半」——和「原文一个字节都不删」直接冲突。
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
         st._mem = None
+        st._idx = None
         try:
-            if os.path.exists(os.path.join(st.root, ".cache.pkl")):
-                os.remove(os.path.join(st.root, ".cache.pkl"))
-        except Exception:
+            os.remove(st.cache_path)
+        except OSError:
             pass
     print(f"{len(rows)} 条  刻度 {before} → {after}   改动 {changed} 条")
     if not args.dry_run:
@@ -174,7 +194,8 @@ def cmd_report(args):
         print(f"还没有 {logp}")
         print("钩子还没跑过。挂上钩子随便说几句，再来一次。")
         return 0
-    lines = [l.rstrip("\n") for l in open(logp, encoding="utf-8") if l.strip()]
+    with open(logp, encoding="utf-8") as f:
+        lines = [l.rstrip("\n") for l in f if l.strip()]
     total_lines = len(lines)
     if getattr(args, "last", 0):
         lines = lines[-args.last:]
@@ -208,8 +229,10 @@ def cmd_report(args):
         ys = sorted(xs)
         return ys[min(len(ys) - 1, int(len(ys) * q))]
 
-    rows = [json.loads(x) for x in open(st.path, encoding="utf-8") if x.strip()] \
-        if os.path.exists(st.path) else []
+    rows = []
+    if os.path.exists(st.path):
+        with open(st.path, encoding="utf-8") as f:
+            rows = [json.loads(x) for x in f if x.strip()]
     n_rec = len(rows)
     nbytes = os.path.getsize(st.path) if os.path.exists(st.path) else 0
 
@@ -278,12 +301,16 @@ def cmd_selftest(args):
                  ("今天下雨，堵死了", "2024-01-05")]:
         st.add(t, d)
     recs = st.load()
-    before = json.dumps([(r["d"].isoformat(), r["text"], r["pin"], r["score"]) for r in recs],
-                        ensure_ascii=False)
-    _ = axis.render(recs, "下雨")
-    after = json.dumps([(r["d"].isoformat(), r["text"], r["pin"], r["score"]) for r in recs],
-                       ensure_ascii=False)
-    chk("I9 检索不改变任何存储", before == after)
+    # 必须比对磁盘字节。原来只比内存里的元组，而实测 recall 会写 .cache.pkl，
+    # 那种断言测不到真正的写盘行为。
+    with open(st.path, "rb") as f:
+        before = f.read()
+    _ = axis.render(recs, "下雨", idx=st.index())
+    _ = axis.retrieve(recs, "住院", idx=st.index())
+    with open(st.path, "rb") as f:
+        after = f.read()
+    chk("I9 检索不改变 events.jsonl 的字节", before == after,
+        f"{len(before)} 字节")
 
     # README 里写的推荐用法是 Store("~/.remember-me")。不展开 ~ 的话
     # 会在当前目录下建一个名字就叫「~」的文件夹——这是个真实踩过的坑。
@@ -305,8 +332,22 @@ def cmd_selftest(args):
     chk("A3 常驻层有上限且按时间排", len(sp) <= 2 and sp == sorted(sp, key=lambda r: r["d"]))
     got = axis.retrieve(recs, "我住院了吗")
     chk("A4 检索命中住院那条", any("住院" in r["text"] for r in got), f"{len(got)} 句")
-    chk("A5 库里没有一句是模型写的",
-        all(isinstance(r["text"], str) and r["text"] for r in recs))
+    # A5 原来只写 isinstance(text, str) and text —— 永远为真，是条空断言。
+    # 真正该守的是：注入给模型的每一句，都必须是库里某条原文，不能是现场生成的句子。
+    ALLOWED_KEYS = {"d", "text", "pin", "score", "ch", "kinds"}
+    extra = set().union(*(set(r) for r in recs)) - ALLOWED_KEYS
+    texts = {r["text"] for r in recs}
+    block = axis.render(recs, "我妈身体怎么样")
+    rendered = []
+    for ln in block.splitlines():
+        # 形如「★2024-01-02　我妈住院了，医生说要观察」
+        body = ln.lstrip("★").strip()
+        if len(body) > 11 and body[4] == "-" and body[7] == "-" and "　" in body:
+            rendered.append(body.split("　", 1)[1])
+    bogus = [x for x in rendered if x not in texts]
+    chk("A5 注入的每一句都来自库内原文",
+        not extra and rendered and not bogus,
+        f"{len(rendered)} 句，越界 {len(bogus)}，多余字段 {sorted(extra) or '无'}")
 
     # 中英混排的大写/小写必须归一。真实语料里「CAD」和「cad-mechanical」是同一件事，
     # 不做 lower() 的话二字组零交集，问「CAD 图纸」召不回「帮我安装 cad 技能」。

@@ -107,6 +107,19 @@ def modality(text):
 CLAUSE_SPLIT = re.compile(r"[，。；！？、,;!?\n]")
 
 
+HEAD_WIN = 12           # 事件词前文窗口：判「谁在说这件事」够用了
+PET_WIN = 6             # 宠物主语更贴着词，窗口短一点减少误伤
+
+
+def _before(text, w, n=HEAD_WIN):
+    """事件词前面那 n 个字。
+
+    「奶奶住院」和「同事说他奶奶住院」的差别全在这几个字里；
+    「猫吐了」和「我吐了」也是。所以判主体只往前看，不往后看。
+    """
+    return text[:text.find(w)][-n:]
+
+
 def clause_at(text, pos):
     """取 pos 所在的那个小句。
 
@@ -246,10 +259,10 @@ def judge(text, V):
         if w in text and w not in scored and w not in MAJOR_MED_DROP:
             _cl = clause_at(text, text.find(w))
             _ml = modality(_cl)
-            if OTHER_SUBJ.search(_cl) or _ml == "reported" or INTERPOSE.search(text[:text.find(w)][-12:]):
+            if OTHER_SUBJ.search(_cl) or _ml == "reported" or INTERPOSE.search(_before(text, w)):
                 ev_score += 2
                 why.append(f"他人就医:{w}+2")
-            elif PET_SUBJ.search(text[:text.find(w)][-6:]):
+            elif PET_SUBJ.search(_before(text, w, PET_WIN)):
                 ev_score -= 4
                 why.append(f"宠物就医:{w}-4")
             else:
@@ -262,7 +275,7 @@ def judge(text, V):
     for w in V["_events"]:
         if w not in text or w in scored:
             continue
-        head = text[:text.find(w)][-12:]
+        head = _before(text, w)
         base = 6
         _cl = clause_at(text, text.find(w))
         mod_l = modality(_cl)
@@ -305,7 +318,9 @@ def judge(text, V):
         break
 
     # ---------- 通道 B：唤醒 ----------
-    ar_hits = [w for w in AROUSAL_RE.findall(text) if not NOT_AROUSAL.search(text)]
+    # NOT_AROUSAL 是整句级的否定闸（「不疼了」「没那么慌」），命中的话整句都不算唤醒，
+    # 和具体匹配到哪个词无关。原来写成列表推导里的逐词过滤，条件其实与 w 无关。
+    ar_hits = [] if NOT_AROUSAL.search(text) else AROUSAL_RE.findall(text)
     if ar_hits:
         uniq = list(dict.fromkeys(ar_hits))
         # 身体反应 / 决定 / 极端失败：单独一条就够（这些装不出来）

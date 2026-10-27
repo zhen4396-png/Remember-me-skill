@@ -133,13 +133,14 @@ def main():
         print()
         print("  刻度跨度（这才是『一段』）：")
         for m in axis.milestones(recs)[:6]:
-            yrs = m["span_days"] / 365.0
+            yrs = m["span_days"] / axis.DAYS_PER_YEAR
             print(f"    {m['cn']:<6} {m['n']:>3}次  跨 {yrs:>4.1f} 年   "
                   f"{m['first']['d']} → {m['last']['d']}")
 
         print()
-        print("  ★ 常驻刻度层：一生中最重的", len(axis.spine(recs)), "句，永远在上下文里")
-        for r in axis.spine(recs)[:5]:
+        sp = axis.spine(recs)          # 建一次就够，别在 print 和循环里各调一遍
+        print("  ★ 常驻刻度层：一生中最重的", len(sp), "句，永远在上下文里")
+        for r in sp[:5]:
             print(f"    {r['d']}  {r['text'][:40]}")
         print()
     finally:

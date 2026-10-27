@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 """Remember me · 词表种子（人工编，按生活域组织）
 
+**运行时只读下面 5 张表**：
+  LOSS_HARD / ILLNESS_SOFT / ILLNESS_WEAK / IDENTITY_PATTERNS / SELF_DISCLOSURE
+
+其余的表（LES_IRREVERSIBLE、DEATH_STRONG/DEATH_WEAK、PERSON_SUBJECT、BODY、EMOTION……
+共 24 张）是 `assets/lexicon.json` 的**源数据**，由一个离线脚本 build_lexicon.py 跑成成品。
+**那个脚本没有随仓库发布**，引擎运行时也不会读这些表。
+
+所以：改词请直接改 `assets/lexicon.json`；这些表只用于说明"当年的词是怎么来的"。
+留着它们是为了让词表可审计——README 的「数据来源」一节指着这里。
+
 分工原则：
   - 这里只放**候选**。精度靠人（这词是不是真在说事），覆盖率靠数据（SUBTLEX 频次当闸门）。
   - 每个词都会被 build_lexicon.py 拿去查 SUBTLEX 频次，太生僻的自动丢掉。
@@ -53,7 +63,7 @@ DEATH_STRONG = [
 ]
 # B 级：需要「谁的」才能判。见 build_lexicon.py 的 DEATH_WEAK 规则。
 # 「走了/去了/老了/没了/不在了」都是日常动词，单看会误判。
-DEATH_WEAK = ["走了", "去了", "老了", "没了", "不在了", "不在了"]
+DEATH_WEAK = ["走了", "去了", "老了", "没了", "不在了"]
 # C 级：不纳入。歧义太高或过于书面，误判代价大于收益。
 DEATH_EXCLUDED = ["崩", "薨", "卒", "不禄", "即世", "大去", "就木", "百年之后"]
 
