@@ -367,6 +367,9 @@ def cmd_selftest(args):
         chk("A12 自建金标不劣化（P>=0.95 R>=0.90）",
             _P >= 0.95 and _R >= 0.90, f"P={_P:.3f} R={_R:.3f} n={len(_S.GOLD)}")
         shutil.rmtree(probe2, ignore_errors=True)
+        # 父目录也要删：Store(probe2) 的 mkdir 会把上面 rmdir 掉的 probe 重新建出来，
+        # 只删 gate 的话家目录里会留一个空壳。
+        shutil.rmtree(os.path.expanduser(probe), ignore_errors=True)
     except Exception as exc:
         chk("A10/A11 检索闸", False, repr(exc))
 
