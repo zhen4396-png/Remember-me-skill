@@ -70,7 +70,7 @@
 ## 30 秒看到效果
 
 ```bash
-git clone https://github.com/<你的用户名>/Remember-me-skill.git
+git clone https://github.com/zhen4396-png/Remember-me-skill.git
 cd Remember-me-skill
 python examples/demo.py        # 不需要安装任何东西
 ```
@@ -130,7 +130,7 @@ python examples/demo.py        # 不需要安装任何东西
 纯 Python 标准库，**没有任何依赖**。Python 3.8+。
 
 ```bash
-git clone https://github.com/<你的用户名>/Remember-me-skill.git
+git clone https://github.com/zhen4396-png/Remember-me-skill.git
 cd Remember-me-skill
 python run.py selftest        # 22 条不变量，全绿才算装好
 ```
